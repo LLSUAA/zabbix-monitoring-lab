@@ -48,11 +48,13 @@
 
 ![zabbix仪表盘](images/zabbix主机配置.png)
 
+## 配置触发器、报警媒介、触发动作、测试邮件
 
 ![zabbix仪表盘](images/zabbix报警测试成功.png)
 
-
+## 触发器报警后163邮件成功接收报警信息
 
 ![zabbix仪表盘](images/zabbix报警邮件接收.jpg)
+
 
 
