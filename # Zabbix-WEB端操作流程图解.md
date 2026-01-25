@@ -52,9 +52,10 @@
 
 ![zabbix仪表盘](images/zabbix报警测试成功.png)
 
-## 触发器报警后163邮件成功接收报警信息
+## 触发器报警后163邮箱成功接收报警信息
 
 ![zabbix仪表盘](images/zabbix报警邮件接收.jpg)
+
 
 
 
