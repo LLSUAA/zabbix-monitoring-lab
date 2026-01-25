@@ -24,3 +24,24 @@
 | PHP | 8.1.2 | 动态编程语言 |
 
 ## 📁 项目结构
+zabbix-monitoring-lab/
+├── README.md # 项目说明
+├── ARCHITECTURE.md # 架构设计
+├── INSTALLATION_GUIDE.md # 安装指南
+├── TROUBLESHOOTING.md # 🚨 故障排查库（核心！）
+├── OPERATION.md # 运维手册
+├── SCRIPTS.md # 脚本说明
+│
+├── images/ # 截图资源
+│ ├── architecture/ # 架构图
+│ ├── dashboard/ # 仪表盘截图
+│ ├── monitoring/ # 监控项截图
+│ └── troubleshooting/ # 故障截图
+│
+├── scripts/ # 自动化脚本
+│ ├── deployment/ # 部署脚本
+│ ├── monitoring/ # 监控脚本
+│ └── ansible/ # Ansible脚本
+│
+├── configs/ # 配置文件模板
+└── docs/ # 详细文档
