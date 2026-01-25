@@ -53,5 +53,6 @@
 
 
 
-![zabbix仪表盘](images/zabbix报警邮件接收.png)
+![zabbix仪表盘](images/zabbix报警邮件接收.jpg)
+
 
