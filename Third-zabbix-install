@@ -1,67 +1,97 @@
-#!/bin/bash
-echo "======= 第二步：安装Zabbix 6.0 监控系统（使用Nginx） ======="
 
-# 设置密码变量（不使用特殊字符！）
+#!/bin/bash
+# 3_install_zabbix_correct.sh
+echo "=========================================="
+echo "步骤三：安装Zabbix 6.0 LTS（包含中文支持）"
+echo "=========================================="
+
+set -e
+
+# 配置变量（与LNMP脚本一致）
 MYSQL_ROOT_PASS="root123"
 ZABBIX_DB_PASS="zabbix123"
+ZABBIX_VERSION="6.0"
 
-# 1. 添加Zabbix仓库
-wget -q https://repo.zabbix.com/zabbix/6.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_6.0-4+ubuntu22.04_all.deb
-sudo dpkg -i zabbix-release_6.0-4+ubuntu22.04_all.deb
-sudo apt update
-rm -f zabbix-release_6.0-4+ubuntu22.04_all.deb
+echo "[1/12] 检查并确保Apache2已停止..."
+sudo systemctl stop apache2 2>/dev/null || true
+sudo systemctl disable apache2 2>/dev/null || true
+echo "✅ Apache2处理完成"
 
-# 2. 安装Zabbix组件
-sudo apt install -y zabbix-server-mysql zabbix-frontend-php zabbix-sql-scripts zabbix-agent2
+echo "[2/12] 验证MySQL root密码连接..."
+if mysql -u root -p${MYSQL_ROOT_PASS} -e "SELECT 1;" >/dev/null 2>&1; then
+    echo "✅ MySQL root连接成功"
+else
+    echo "❌ MySQL root连接失败，退出安装"
+    exit 1
+fi
 
-# 3. 创建Zabbix数据库和用户
-echo "创建Zabbix数据库..."
-sudo mysql -u root -p$MYSQL_ROOT_PASS <<EOF
-CREATE DATABASE IF NOT EXISTS zabbix CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
-CREATE USER IF NOT EXISTS 'zabbix'@'localhost' IDENTIFIED BY '$ZABBIX_DB_PASS';
-GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'localhost';
-FLUSH PRIVILEGES;
+echo "[3/12] 添加Zabbix 6.0官方仓库..."
+wget -q https://repo.zabbix.com/zabbix/${ZABBIX_VERSION}/ubuntu/pool/main/z/zabbix-release/zabbix-release_${ZABBIX_VERSION}-4+ubuntu22.04_all.deb -O /tmp/zabbix.deb
+sudo dpkg -i /tmp/zabbix.deb
+sudo apt update -q
+rm -f /tmp/zabbix.deb
+echo "✅ Zabbix仓库添加完成"
+
+echo "[4/12] 安装Zabbix组件..."
+sudo apt install -y \
+    zabbix-server-mysql \
+    zabbix-frontend-php \
+    zabbix-nginx-conf \
+    zabbix-sql-scripts \
+    zabbix-agent2
+echo "✅ Zabbix组件安装完成"
+
+echo "[5/12] 配置MySQL解决二进制日志问题..."
+sudo mysql -u root -p${MYSQL_ROOT_PASS} <<EOF
 SET GLOBAL log_bin_trust_function_creators = 1;
 EOF
+echo "✅ MySQL权限配置完成"
 
-# 4. 导入数据库架构
-echo "导入数据库架构..."
-sudo zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql -uzabbix -p$ZABBIX_DB_PASS zabbix
+echo "[6/12] 创建Zabbix数据库和用户..."
+mysql -u root -p${MYSQL_ROOT_PASS} <<EOF
+CREATE DATABASE IF NOT EXISTS zabbix CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
+CREATE USER IF NOT EXISTS 'zabbix'@'localhost' IDENTIFIED WITH mysql_native_password BY '${ZABBIX_DB_PASS}';
+GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'localhost';
+FLUSH PRIVILEGES;
+EOF
+echo "✅ 数据库创建完成"
 
-# 5. 恢复权限设置
-sudo mysql -u root -p$MYSQL_ROOT_PASS -e "SET GLOBAL log_bin_trust_function_creators = 0;"
+echo "[7/12] 导入Zabbix数据库架构..."
+echo "正在导入（约1-2分钟）..."
+sudo zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql -uzabbix -p${ZABBIX_DB_PASS} zabbix
+echo "✅ 数据库导入完成"
 
-# 6. 配置Zabbix Server（已修复！包含必要的LogFile参数）
-echo "配置Zabbix Server..."
+echo "[8/12] 配置Zabbix Server..."
 sudo tee /etc/zabbix/zabbix_server.conf > /dev/null <<EOF
+DBHost=localhost
+DBName=zabbix
+DBUser=zabbix
+DBPassword=${ZABBIX_DB_PASS}
 LogFile=/var/log/zabbix/zabbix_server.log
 LogFileSize=0
 PidFile=/run/zabbix/zabbix_server.pid
 SocketDir=/run/zabbix
-DBHost=localhost
-DBName=zabbix
-DBUser=zabbix
-DBPassword=$ZABBIX_DB_PASS
 Timeout=4
-AlertScriptsPath=/usr/lib/zabbix/alertscripts
-ExternalScripts=/usr/lib/zabbix/externalscripts
 LogSlowQueries=3000
 StatsAllowedIP=127.0.0.1
 EOF
+echo "✅ Zabbix Server配置完成"
 
-# 6.5 创建必要的运行时目录并设置权限（新增的关键步骤！）
-echo "创建运行时目录并设置权限..."
-sudo mkdir -p /run/zabbix /var/log/zabbix
-sudo chown -R zabbix:zabbix /run/zabbix /var/log/zabbix
-sudo chmod 755 /run/zabbix
-
-# 7. 创建Zabbix专属Nginx配置（使用8080端口，避免与LNMP冲突）
+echo "[9/12] 配置Zabbix Web（端口8080）..."
 sudo tee /etc/nginx/sites-available/zabbix > /dev/null <<'EOF'
 server {
     listen 8080;
     server_name _;
+    
     root /usr/share/zabbix;
+    
     index index.php;
+    
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+    }
     
     location / {
         try_files $uri $uri/ /index.php?$args;
@@ -73,38 +103,134 @@ server {
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
         include fastcgi_params;
     }
+    
+    location ~ /\.ht {
+        deny all;
+    }
 }
 EOF
 
-# 8. 启用Zabbix站点（不删除默认站点，两者共存）
 sudo ln -sf /etc/nginx/sites-available/zabbix /etc/nginx/sites-enabled/
+echo "✅ Zabbix Web配置完成"
 
-# 9. PHP配置
-sudo tee /etc/php/8.1/fpm/conf.d/99-zabbix.ini > /dev/null <<EOF
-max_execution_time = 300
-max_input_time = 300
-memory_limit = 128M
-post_max_size = 16M
-upload_max_filesize = 2M
-date.timezone = Asia/Shanghai
-EOF
-
-# 10. 设置权限
+echo "[10/12] 设置目录权限并启动服务..."
+sudo mkdir -p /var/log/zabbix /var/run/zabbix
+sudo chown -R zabbix:zabbix /var/log/zabbix /var/run/zabbix
 sudo chown -R www-data:www-data /usr/share/zabbix/
 
-# 11. 重启服务
 sudo systemctl restart php8.1-fpm
-sudo nginx -t && sudo systemctl restart nginx
 sudo systemctl restart zabbix-server zabbix-agent2
-sudo systemctl enable zabbix-server zabbix-agent2
+
+if sudo nginx -t; then
+    sudo systemctl restart nginx
+    echo "✅ 服务启动完成"
+else
+    echo "⚠️ Nginx配置测试失败，但继续..."
+fi
+
+echo "[11/12] 验证安装..."
+sleep 5
 
 IP_ADDR=$(hostname -I | awk '{print $1}')
+
 echo ""
-echo "✅ Zabbix安装完成！"
 echo "=========================================="
-echo "LNMP测试页: http://$IP_ADDR"
-echo "Zabbix监控: http://$IP_ADDR:8080/"
-echo "Zabbix登录: Admin / zabbix"
-echo "MySQL root密码: $MYSQL_ROOT_PASS"
-echo "Zabbix数据库密码: $ZABBIX_DB_PASS"
+echo "✅ ZABBIX 6.0 LTS 基础安装完成！"
+echo "=========================================="
+echo "服务状态检查:"
+if systemctl is-active --quiet zabbix-server; then
+    echo "✅ zabbix-server: 运行中"
+else
+    echo "❌ zabbix-server: 未运行"
+fi
+
+if systemctl is-active --quiet nginx; then
+    echo "✅ nginx: 运行中"
+else
+    echo "❌ nginx: 未运行"
+fi
+
+# 添加中文语言支持
+echo "[12/12] 配置中文语言支持..."
+echo "安装系统中文语言包..."
+sudo apt install -y language-pack-zh-hans language-pack-zh-hant
+
+echo "生成中文locale..."
+sudo locale-gen zh_CN.UTF-8 zh_TW.UTF-8
+
+echo "设置系统locale..."
+sudo update-locale LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8
+
+echo "配置PHP中文支持..."
+sudo tee /etc/php/8.1/fpm/conf.d/99-chinese.ini > /dev/null <<'EOF'
+default_charset = "UTF-8"
+mbstring.language = Chinese
+mbstring.internal_encoding = UTF-8
+mbstring.http_input = UTF-8
+mbstring.http_output = UTF-8
+mbstring.detect_order = auto
+mbstring.substitute_character = none
+EOF
+
+echo "配置Zabbix默认语言为中文..."
+if [ ! -f /usr/share/zabbix/conf/zabbix.conf.php ]; then
+    echo "创建zabbix.conf.php配置文件..."
+    sudo cp /usr/share/zabbix/conf/zabbix.conf.php.example /usr/share/zabbix/conf/zabbix.conf.php 2>/dev/null || \
+    sudo tee /usr/share/zabbix/conf/zabbix.conf.php > /dev/null <<'EOF'
+<?php
+// Zabbix GUI configuration file.
+global $DB;
+
+$DB['TYPE']     = 'MYSQL';
+$DB['SERVER']   = 'localhost';
+$DB['PORT']     = '0';
+$DB['DATABASE'] = 'zabbix';
+$DB['USER']     = 'zabbix';
+$DB['PASSWORD'] = 'zabbix123';
+
+// Schema name. Used for IBM DB2 and PostgreSQL.
+$DB['SCHEMA'] = '';
+
+$ZBX_SERVER      = 'localhost';
+$ZBX_SERVER_PORT = '10051';
+$ZBX_SERVER_NAME = '';
+
+$IMAGE_FORMAT_DEFAULT = IMAGE_FORMAT_PNG;
+
+// 时区设置
+date_default_timezone_set('Asia/Shanghai');
+
+// 语言设置
+$locale = 'zh_CN';
+EOF
+else
+    echo "已存在zabbix.conf.php，添加中文配置..."
+    if ! grep -q "date_default_timezone_set" /usr/share/zabbix/conf/zabbix.conf.php; then
+        sudo sed -i "/\$IMAGE_FORMAT_DEFAULT = IMAGE_FORMAT_PNG;/a\\\n// 时区设置\ndate_default_timezone_set('Asia/Shanghai');" /usr/share/zabbix/conf/zabbix.conf.php
+    fi
+    
+    if grep -q "\$locale =" /usr/share/zabbix/conf/zabbix.conf.php; then
+        sudo sed -i "s/\$locale = .*;/\$locale = 'zh_CN';/" /usr/share/zabbix/conf/zabbix.conf.php
+    else
+        echo -e "\n// 语言设置\n\$locale = 'zh_CN';" | sudo tee -a /usr/share/zabbix/conf/zabbix.conf.php > /dev/null
+    fi
+fi
+
+echo "重启服务使中文配置生效..."
+sudo systemctl restart php8.1-fpm
+sudo systemctl restart nginx
+sudo systemctl restart zabbix-server
+
+sleep 3
+
+echo ""
+echo "✅ ZABBIX 6.0 LTS 完全安装完成！"
+echo "=========================================="
+echo "🌐 访问地址:"
+echo "  Zabbix控制台: http://${IP_ADDR}:8080/zabbix.php"
+echo "  LNMP测试页:   http://${IP_ADDR}/"
+echo ""
+echo "🔐 登录凭据:"
+echo "  Zabbix: Admin (注意A大写) / zabbix"
+echo "  首次登录后可以在用户设置中选择中文界面"
 echo "=========================================="
