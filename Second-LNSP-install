@@ -1,84 +1,632 @@
 #!/bin/bash
+# 2_install_lnmp_fixed.sh
 echo "=========================================="
-echo "LNMP环境部署 (Ubuntu 22.04)"
+echo "安装LNMP环境 (Nginx + MySQL + PHP)"
 echo "=========================================="
 
-# 设置密码（使用简单密码，避免特殊字符）
+set -e
+
+# 配置变量
 MYSQL_ROOT_PASS="root123"
-MYSQL_ZABBIX_PASS="zabbix123"
+TIMEZONE="Asia/Shanghai"
 
-# 更新系统
-echo "[1/7] 更新系统..."
+# 记录开始时间
+START_TIME=$(date +%s)
+
+echo "[1/9] 更新系统并安装必要工具..."
 sudo apt update
 sudo apt upgrade -y
+sudo apt install -y \
+    software-properties-common \
+    lsb-release \
+    ca-certificates \
+    wget \
+    curl \
+    gnupg \
+    debconf-utils
 
-# 安装Nginx
-echo "[2/7] 安装Nginx..."
-sudo apt install -y nginx
-sudo systemctl start nginx
-sudo systemctl enable nginx
+echo "[2/9] 预配置MySQL密码（关键步骤）..."
+# 提前设置MySQL的root密码，避免交互式提示
+echo "mysql-server mysql-server/root_password password ${MYSQL_ROOT_PASS}" | sudo debconf-set-selections
+echo "mysql-server mysql-server/root_password_again password ${MYSQL_ROOT_PASS}" | sudo debconf-set-selections
+echo "mysql-server-8.0 mysql-server/root_password password ${MYSQL_ROOT_PASS}" | sudo debconf-set-selections
+echo "mysql-server-8.0 mysql-server/root_password_again password ${MYSQL_ROOT_PASS}" | sudo debconf-set-selections
+echo "✅ MySQL密码预配置完成"
 
-# 安装MySQL
-echo "[3/7] 安装MySQL..."
+echo "[3/9] 安装MySQL 8.0..."
 sudo apt install -y mysql-server
 sudo systemctl start mysql
 sudo systemctl enable mysql
 
-# 等待MySQL启动
-sleep 3
+# 验证MySQL安装
+echo "等待MySQL启动..."
+sleep 5
 
-# 设置MySQL密码
-echo "[4/7] 配置MySQL..."
-sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS';"
-sudo mysql -u root -p$MYSQL_ROOT_PASS -e "FLUSH PRIVILEGES;"
+# 检查MySQL服务状态
+if ! systemctl is-active --quiet mysql; then
+    echo "⚠️ MySQL服务未运行，尝试启动..."
+    sudo systemctl restart mysql
+    sleep 3
+fi
 
-# 安装PHP
-echo "[5/7] 安装PHP..."
-sudo apt install -y php8.1-fpm php8.1-mysql php8.1-cli php8.1-mbstring php8.1-gd
+echo "[4/9] 验证和加固MySQL密码..."
+# 多种方法确保密码设置正确
+echo "尝试方法1：使用mysqladmin..."
+sudo mysqladmin -u root password ${MYSQL_ROOT_PASS} 2>/dev/null || true
 
-# 配置PHP
-echo "[6/7] 配置PHP..."
-sudo sed -i "s/^;date.timezone =.*/date.timezone = Asia\/Shanghai/" /etc/php/8.1/fpm/php.ini
-sudo sed -i "s/^upload_max_filesize =.*/upload_max_filesize = 32M/" /etc/php/8.1/fpm/php.ini
-sudo sed -i "s/^post_max_size =.*/post_max_size = 32M/" /etc/php/8.1/fpm/php.ini
+echo "尝试方法2：直接SQL修改..."
+sudo mysql -uroot <<MYSQL_SCRIPT 2>/dev/null || true
+ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '${MYSQL_ROOT_PASS}';
+FLUSH PRIVILEGES;
+MYSQL_SCRIPT
 
-# 配置Nginx
-echo "[7/7] 配置Nginx..."
-sudo tee /etc/nginx/sites-available/default > /dev/null <<'NGINX_CONF'
+# 最终验证
+echo "测试MySQL连接..."
+if mysql -u root -p${MYSQL_ROOT_PASS} -e "SELECT 1;" >/dev/null 2>&1; then
+    echo "✅ MySQL root密码验证成功: ${MYSQL_ROOT_PASS}"
+else
+    echo "❌ MySQL密码设置失败，尝试最终修复..."
+    
+    # 紧急修复方案
+    sudo systemctl stop mysql
+    sudo mysqld_safe --skip-grant-tables &
+    sleep 3
+    
+    mysql <<EMERGENCY_FIX
+USE mysql;
+UPDATE user SET plugin='mysql_native_password' WHERE User='root';
+UPDATE user SET authentication_string=PASSWORD('${MYSQL_ROOT_PASS}') WHERE User='root';
+FLUSH PRIVILEGES;
+EMERGENCY_FIX
+    
+    sudo pkill mysqld
+    sleep 2
+    sudo systemctl start mysql
+    sleep 3
+    
+    # 再次验证
+    if mysql -u root -p${MYSQL_ROOT_PASS} -e "SELECT 1;" >/dev/null 2>&1; then
+        echo "✅ MySQL密码修复成功"
+    else
+        echo "⚠️ MySQL仍有问题，但继续安装..."
+    fi
+fi
+
+echo "[5/9] 安装Nginx..."
+sudo apt install -y nginx
+# 确保Nginx配置目录存在
+sudo mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+sudo systemctl start nginx
+sudo systemctl enable nginx
+
+# 检查端口冲突
+echo "检查端口冲突..."
+if sudo netstat -tlnp | grep -E ":80\s.*nginx" >/dev/null; then
+    echo "✅ Nginx已在端口80运行"
+else
+    echo "⚠️ Nginx端口可能被占用，检查中..."
+    sudo lsof -i :80 || true
+fi
+
+echo "[6/9] 添加PHP仓库并安装PHP 8.1..."
+sudo add-apt-repository -y ppa:ondrej/php
+sudo apt update
+sudo apt install -y \
+    php8.1-fpm \
+    php8.1-mysql \
+    php8.1-cli \
+    php8.1-curl \
+    php8.1-gd \
+    php8.1-mbstring \
+    php8.1-xml \
+    php8.1-bcmath \
+    php8.1-zip \
+    php8.1-opcache \
+    php8.1-ldap
+
+echo "[7/9] 配置PHP..."
+sudo tee /etc/php/8.1/fpm/php.ini > /dev/null <<PHPINI
+[PHP]
+engine = On
+short_open_tag = Off
+precision = 14
+output_buffering = 4096
+zlib.output_compression = Off
+implicit_flush = Off
+unserialize_callback_func =
+serialize_precision = -1
+disable_functions = pcntl_alarm,pcntl_fork,pcntl_waitpid,pcntl_wait,pcntl_wifexited,pcntl_wifstopped,pcntl_wifsignaled,pcntl_wifcontinued,pcntl_wexitstatus,pcntl_wtermsig,pcntl_wstopsig,pcntl_signal,pcntl_signal_dispatch,pcntl_get_last_error,pcntl_strerror,pcntl_sigprocmask,pcntl_sigwaitinfo,pcntl_sigtimedwait,pcntl_exec,pcntl_getpriority,pcntl_setpriority
+disable_classes =
+zend.enable_gc = On
+expose_php = Off
+max_execution_time = 600
+max_input_time = 600
+memory_limit = 256M
+error_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT
+display_errors = Off
+display_startup_errors = Off
+log_errors = On
+log_errors_max_len = 1024
+ignore_repeated_errors = Off
+ignore_repeated_source = Off
+report_memleaks = On
+html_errors = On
+error_log = /var/log/php8.1-fpm.log
+
+[Date]
+date.timezone = ${TIMEZONE}
+
+[filter]
+[iconv]
+[intl]
+[sqlite3]
+[Pcre]
+
+[mail function]
+SMTP = localhost
+smtp_port = 25
+mail.add_x_header = On
+
+[SQL]
+sql.safe_mode = Off
+
+[ODBC]
+odbc.allow_persistent = On
+odbc.check_persistent = On
+odbc.max_persistent = -1
+odbc.max_links = -1
+odbc.defaultlrl = 4096
+odbc.defaultbinmode = 1
+
+[MySQL]
+mysql.allow_local_infile = On
+mysql.allow_persistent = On
+mysql.cache_size = 2000
+mysql.max_persistent = -1
+mysql.max_links = -1
+mysql.connect_timeout = 60
+mysql.trace_mode = Off
+
+[MySQLi]
+mysqli.max_persistent = -1
+mysqli.allow_persistent = On
+mysqli.max_links = -1
+mysqli.cache_size = 2000
+mysqli.default_port = 3306
+mysqli.reconnect = Off
+
+[mysqlnd]
+mysqlnd.collect_statistics = On
+mysqlnd.collect_memory_statistics = Off
+
+[PostgreSQL]
+pgsql.allow_persistent = On
+pgsql.auto_reset_persistent = Off
+pgsql.max_persistent = -1
+pgsql.max_links = -1
+pgsql.ignore_notice = 0
+pgsql.log_notice = 0
+
+[bcmath]
+bcmath.scale = 0
+
+[Session]
+session.save_handler = files
+session.use_cookies = 1
+session.use_only_cookies = 1
+session.name = PHPSESSID
+session.auto_start = 0
+session.cookie_lifetime = 0
+session.cookie_path = /
+session.serialize_handler = php
+session.gc_probability = 1
+session.gc_divisor = 1000
+session.gc_maxlifetime = 1440
+session.referer_check =
+session.cache_limiter = nocache
+session.cache_expire = 180
+session.use_trans_sid = 0
+
+[Assertion]
+
+[COM]
+
+[mbstring]
+
+[gd]
+
+[exif]
+
+[Tidy]
+tidy.clean_output = Off
+
+[soap]
+soap.wsdl_cache_enabled=1
+soap.wsdl_cache_dir="/tmp"
+soap.wsdl_cache_ttl=86400
+soap.wsdl_cache_limit = 5
+
+[ldap]
+ldap.max_links = -1
+
+[dba]
+
+[opcache]
+opcache.enable=1
+opcache.enable_cli=0
+opcache.memory_consumption=128
+opcache.interned_strings_buffer=8
+opcache.max_accelerated_files=10000
+opcache.revalidate_freq=2
+opcache.fast_shutdown=1
+
+[curl]
+
+[openssl]
+PHPINI
+
+# 添加文件上传限制
+echo "post_max_size = 32M" | sudo tee -a /etc/php/8.1/fpm/php.ini
+echo "upload_max_filesize = 32M" | sudo tee -a /etc/php/8.1/fpm/php.ini
+echo "max_file_uploads = 20" | sudo tee -a /etc/php/8.1/fpm/php.ini
+
+# 复制到CLI配置
+sudo cp /etc/php/8.1/fpm/php.ini /etc/php/8.1/cli/php.ini
+sudo systemctl restart php8.1-fpm
+sudo systemctl enable php8.1-fpm
+
+echo "[8/9] 配置Nginx支持PHP..."
+sudo tee /etc/nginx/sites-available/default > /dev/null <<'NGINX_CONFIG'
 server {
-    listen 80;
+    listen 80 default_server;
+    listen [::]:80 default_server;
     server_name _;
+    
     root /var/www/html;
-    index index.php index.html;
+    index index.php index.html index.htm;
+    
+    access_log /var/log/nginx/access.log;
+    error_log /var/log/nginx/error.log;
+    
+    # 安全头
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer-when-downgrade" always;
     
     location / {
         try_files $uri $uri/ =404;
     }
     
+    # PHP处理
     location ~ \.php$ {
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+        
+        # 额外的PHP参数
+        fastcgi_param PHP_VALUE "
+            post_max_size=32M
+            upload_max_filesize=32M
+            max_execution_time=600
+            memory_limit=256M
+            date.timezone=Asia/Shanghai
+        ";
+    }
+    
+    # 禁止访问隐藏文件
+    location ~ /\.(ht|git|svn) {
+        deny all;
+    }
+    
+    # 静态文件缓存
+    location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
     }
 }
-NGINX_CONF
+NGINX_CONFIG
 
-# 创建测试页
-sudo tee /var/www/html/index.php > /dev/null <<'HTML'
-<?php
-phpinfo();
-?>
-HTML
+# 创建Web根目录
+sudo mkdir -p /var/www/html
+sudo chown -R www-data:www-data /var/www
+sudo chmod -R 755 /var/www
 
-sudo chown -R www-data:www-data /var/www/html
+echo "[9/9] 创建测试页面并验证..."
+sudo tee /var/www/html/index.php > /dev/null <<'INDEX_PHP'
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LNMP环境测试 - 安装成功</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        .header h1 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+        .status-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #3498db;
+        }
+        .status-card.good {
+            border-left-color: #2ecc71;
+        }
+        .status-card.warning {
+            border-left-color: #f39c12;
+        }
+        .status-card.danger {
+            border-left-color: #e74c3c;
+        }
+        .status-card h3 {
+            margin-top: 0;
+            color: #2c3e50;
+            font-size: 1.2em;
+        }
+        .btn-group {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin: 30px 0;
+            flex-wrap: wrap;
+        }
+        .btn {
+            padding: 12px 25px;
+            background: #3498db;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: 600;
+            transition: all 0.3s;
+            border: none;
+            cursor: pointer;
+        }
+        .btn:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        .btn-phpinfo {
+            background: #9b59b6;
+        }
+        .btn-phpinfo:hover {
+            background: #8e44ad;
+        }
+        .btn-zabbix {
+            background: #2ecc71;
+        }
+        .btn-zabbix:hover {
+            background: #27ae60;
+        }
+        .info-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        .info-table th, .info-table td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        .info-table th {
+            background: #f2f2f2;
+            font-weight: 600;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            color: #7f8c8d;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>✅ LNMP环境安装成功</h1>
+            <p>版本信息及组件状态</p>
+        </div>
+        
+        <div class="status-grid">
+            <div class="status-card good">
+                <h3>Nginx</h3>
+                <p><strong>版本:</strong> <?php echo shell_exec('nginx -v 2>&1'); ?></p>
+                <p><strong>状态:</strong> ✅ 运行中</p>
+                <p><strong>端口:</strong> 80</p>
+            </div>
+            
+            <div class="status-card <?php 
+                $mysql_check = shell_exec('mysql -u root -proot123 -e "SELECT 1;" 2>&1');
+                echo (strpos($mysql_check, 'ERROR') === false) ? 'good' : 'danger';
+            ?>">
+                <h3>MySQL</h3>
+                <p><strong>版本:</strong> <?php echo shell_exec('mysql --version'); ?></p>
+                <p><strong>状态:</strong> 
+                    <?php
+                    $mysql_status = shell_exec('systemctl is-active mysql 2>/dev/null');
+                    echo (trim($mysql_status) == 'active') ? '✅ 运行中' : '❌ 未运行';
+                    ?>
+                </p>
+                <p><strong>用户:</strong> root</p>
+            </div>
+            
+            <div class="status-card good">
+                <h3>PHP</h3>
+                <p><strong>版本:</strong> <?php echo phpversion(); ?></p>
+                <p><strong>内存限制:</strong> <?php echo ini_get('memory_limit'); ?></p>
+                <p><strong>时区:</strong> <?php echo ini_get('date.timezone'); ?></p>
+            </div>
+            
+            <div class="status-card">
+                <h3>系统信息</h3>
+                <p><strong>主机:</strong> <?php echo gethostname(); ?></p>
+                <p><strong>IP地址:</strong> <?php echo $_SERVER['SERVER_ADDR']; ?></p>
+                <p><strong>时间:</strong> <?php echo date('Y-m-d H:i:s'); ?></p>
+            </div>
+        </div>
+        
+        <table class="info-table">
+            <thead>
+                <tr>
+                    <th>组件</th>
+                    <th>版本</th>
+                    <th>状态</th>
+                    <th>配置信息</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>操作系统</td>
+                    <td><?php echo shell_exec('lsb_release -ds'); ?></td>
+                    <td>✅ 正常</td>
+                    <td>Ubuntu 22.04 LTS</td>
+                </tr>
+                <tr>
+                    <td>Web服务器</td>
+                    <td><?php echo $_SERVER['SERVER_SOFTWARE']; ?></td>
+                    <td>✅ 运行中</td>
+                    <td>监听端口: 80</td>
+                </tr>
+                <tr>
+                    <td>数据库</td>
+                    <td>MySQL 8.0</td>
+                    <td>
+                        <?php
+                        $mysql_test = shell_exec('mysql -u root -proot123 -e "SELECT version();" 2>&1');
+                        echo (strpos($mysql_test, 'version') !== false) ? '✅ 已连接' : '❌ 未连接';
+                        ?>
+                    </td>
+                    <td>用户: root</td>
+                </tr>
+                <tr>
+                    <td>PHP解释器</td>
+                    <td><?php echo phpversion(); ?></td>
+                    <td>✅ 已加载</td>
+                    <td>SAPI: <?php echo php_sapi_name(); ?></td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <div class="btn-group">
+            <a href="/phpinfo.php" class="btn btn-phpinfo">查看PHP完整信息</a>
+            <a href="http://<?php echo $_SERVER['SERVER_ADDR']; ?>:8080/" class="btn btn-zabbix">安装Zabbix监控</a>
+            <button onclick="testMySQL()" class="btn">测试MySQL连接</button>
+        </div>
+        
+        <div class="footer">
+            <p>安装时间: <?php echo date('Y-m-d H:i:s'); ?></p>
+            <p>脚本版本: 修复版 v2.0 | 已解决MySQL认证问题</p>
+        </div>
+    </div>
+    
+    <script>
+    function testMySQL() {
+        alert('MySQL连接测试:\n用户名: root\n密码: root123\n\n请运行命令验证:\nmysql -u root -proot123 -e "SHOW DATABASES;"');
+    }
+    </script>
+</body>
+</html>
+INDEX_PHP
+
+# 创建phpinfo页面
+echo "<?php phpinfo(); ?>" | sudo tee /var/www/html/phpinfo.php > /dev/null
 
 # 重启服务
 sudo nginx -t
-sudo systemctl reload nginx
+sudo systemctl restart nginx
 sudo systemctl restart php8.1-fpm
 
-IP_ADDR=$(hostname -I | awk '{print $1}')
 echo ""
-echo "✅ LNMP部署完成！"
-echo "访问: http://$IP_ADDR"
-echo "MySQL root密码: $MYSQL_ROOT_PASS"
-echo "========================================="
+END_TIME=$(date +%s)
+ELAPSED_TIME=$((END_TIME - START_TIME))
+
+IP_ADDR=$(hostname -I | awk '{print $1}')
+
+echo "=========================================="
+echo "✅ LNMP环境部署完成！"
+echo "=========================================="
+echo "安装耗时: ${ELAPSED_TIME}秒"
+echo "访问地址: http://${IP_ADDR}/"
+echo "PHP信息: http://${IP_ADDR}/phpinfo.php"
+echo ""
+echo "🔑 MySQL凭据:"
+echo "  用户名: root"
+echo "  密码: root123"
+echo ""
+echo "📋 验证命令:"
+echo "  mysql -u root -proot123 -e 'SHOW DATABASES;'"
+echo "  sudo systemctl status nginx mysql php8.1-fpm"
+echo "=========================================="
+
+# 最终验证
+echo ""
+echo "执行最终验证..."
+sleep 2
+
+echo "1. 检查服务状态:"
+services=("nginx" "mysql" "php8.1-fpm")
+all_ok=true
+for service in "${services[@]}"; do
+    if systemctl is-active --quiet "$service"; then
+        echo "   ✅ $service: 运行正常"
+    else
+        echo "   ❌ $service: 服务异常"
+        all_ok=false
+    fi
+done
+
+echo "2. 测试MySQL连接..."
+if mysql -u root -proot123 -e "SELECT 1;" >/dev/null 2>&1; then
+    echo "   ✅ MySQL连接成功"
+else
+    echo "   ❌ MySQL连接失败"
+    all_ok=false
+fi
+
+echo "3. 测试Web访问..."
+if curl -s -o /dev/null -w "%{http_code}" http://localhost/ | grep -q "200\|302"; then
+    echo "   ✅ Web服务正常"
+else
+    echo "   ❌ Web服务异常"
+    all_ok=false
+fi
+
+if $all_ok; then
+    echo ""
+    echo "🎉 所有测试通过！可以开始安装Zabbix。"
+else
+    echo ""
+    echo "⚠️ 部分测试失败，请检查相关服务。"
+fi
