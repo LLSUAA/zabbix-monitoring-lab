@@ -1,0 +1,84 @@
+#!/bin/bash
+echo "=========================================="
+echo "LNMP环境部署 (Ubuntu 22.04)"
+echo "=========================================="
+
+# 设置密码（使用简单密码，避免特殊字符）
+MYSQL_ROOT_PASS="root123"
+MYSQL_ZABBIX_PASS="zabbix123"
+
+# 更新系统
+echo "[1/7] 更新系统..."
+sudo apt update
+sudo apt upgrade -y
+
+# 安装Nginx
+echo "[2/7] 安装Nginx..."
+sudo apt install -y nginx
+sudo systemctl start nginx
+sudo systemctl enable nginx
+
+# 安装MySQL
+echo "[3/7] 安装MySQL..."
+sudo apt install -y mysql-server
+sudo systemctl start mysql
+sudo systemctl enable mysql
+
+# 等待MySQL启动
+sleep 3
+
+# 设置MySQL密码
+echo "[4/7] 配置MySQL..."
+sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS';"
+sudo mysql -u root -p$MYSQL_ROOT_PASS -e "FLUSH PRIVILEGES;"
+
+# 安装PHP
+echo "[5/7] 安装PHP..."
+sudo apt install -y php8.1-fpm php8.1-mysql php8.1-cli php8.1-mbstring php8.1-gd
+
+# 配置PHP
+echo "[6/7] 配置PHP..."
+sudo sed -i "s/^;date.timezone =.*/date.timezone = Asia\/Shanghai/" /etc/php/8.1/fpm/php.ini
+sudo sed -i "s/^upload_max_filesize =.*/upload_max_filesize = 32M/" /etc/php/8.1/fpm/php.ini
+sudo sed -i "s/^post_max_size =.*/post_max_size = 32M/" /etc/php/8.1/fpm/php.ini
+
+# 配置Nginx
+echo "[7/7] 配置Nginx..."
+sudo tee /etc/nginx/sites-available/default > /dev/null <<'NGINX_CONF'
+server {
+    listen 80;
+    server_name _;
+    root /var/www/html;
+    index index.php index.html;
+    
+    location / {
+        try_files $uri $uri/ =404;
+    }
+    
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+    }
+}
+NGINX_CONF
+
+# 创建测试页
+sudo tee /var/www/html/index.php > /dev/null <<'HTML'
+<?php
+phpinfo();
+?>
+HTML
+
+sudo chown -R www-data:www-data /var/www/html
+
+# 重启服务
+sudo nginx -t
+sudo systemctl reload nginx
+sudo systemctl restart php8.1-fpm
+
+IP_ADDR=$(hostname -I | awk '{print $1}')
+echo ""
+echo "✅ LNMP部署完成！"
+echo "访问: http://$IP_ADDR"
+echo "MySQL root密码: $MYSQL_ROOT_PASS"
+echo "=========================================="
