@@ -1,7 +1,7 @@
 # Zabbix-WEB端操作流程图解
 
 ## 第一步打开仪表盘查看安装状态及版本信息
-## 仪表盘页面创建在LNSP一键部署脚本中完成（移步LNSP脚本部署）
+## 仪表盘页面创建在LNSP一键部署脚本中完成（Second-LNSP-install.md文件查看代码）
 
 
 ![仪表盘页面展示](images/状态监测仪表盘.png)
@@ -54,3 +54,4 @@
 
 
 ![zabbix仪表盘](images/zabbix报警邮件接收.png)
+
