@@ -24,6 +24,7 @@
 | PHP | 8.1.2 | 动态编程语言 |
 
 ## 📁 项目结构
+```
 zabbix-monitoring-lab/
 ├── README.md # 项目说明
 ├── ARCHITECTURE.md # 架构设计
@@ -40,11 +41,10 @@ zabbix-monitoring-lab/
 │
 ├── scripts/ # 自动化脚本
 │ ├── deployment/ # 部署脚本
-│ ├── monitoring/ # 监控脚本
-│ └── ansible/ # Ansible脚本
+│ └──  monitoring/ # 监控脚本
 │
 ├── configs/ # 配置文件模板
 └── docs/ # 详细文档
-
+```
 
 ------------
