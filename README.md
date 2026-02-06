@@ -42,18 +42,34 @@
 sudo apt update && sudo apt upgrade -y
 
 # 安装常用工具
-sudo apt install -y \
-  curl wget vim git htop net-tools \
-  tree telnet software-properties-common \
-  apt-transport-https ca-certificates
+sudo apt install -y net-tools curl wget vim htop tree git unzip telnet jq
 
 ```
 ## 第二阶段：搭建LNMP环境（Nginx + MySQL + PHP）
 ```
-sudo vim lnmp_install.sh
+## Vim创建脚本
+sudo vim Second-LNSP-install.sh
+(脚本内容详情见项目目录→Second-LNSP-install.sh)
 
+## 添加脚本执行权限
+sudo chmod +x Second-LNSP-install.sh
 
-
+## 使用一键部署LNSP脚本进行一键安装部署
+sudo ./Second-LNSP-install.sh
+```
+## 第二阶段：搭建zabbix环境
 
 ```
+## Vim创建脚本
+sudo vim Third-zabbix-install.sh
+(脚本内容详情见项目目录→Second-LNSP-install.sh)
+
+## 添加脚本执行权限
+sudo chmod +x Third-zabbix-install.sh
+
+## 使用一键部署zabbix脚本进行一键安装部署
+sudo ./Third-zabbix-install.sh
+```
+## 安装部署完成页面
+![Zabbix部署](images/zabbix6.png)
 ------------
