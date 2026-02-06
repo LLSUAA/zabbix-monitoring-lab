@@ -6,13 +6,23 @@
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
 ## 📋 项目概述
-这是一个完整的Linux运维监控实战项目，基于Zabbix 6.0 LTS构建企业级IT基础设施监控解决方案。项目记录了从零开始的完整部署过程，特别注重实战中遇到的问题和解决方案。
+这是一个完整的 企业级监控系统手动部署项目，基于 Zabbix 6.0 LTS 构建。项目详细记录了从零开始部署 LNMP 环境到完整监控系统上线的全流程，包含详细命令、配置说明和排错记录，是学习 Linux 运维和监控系统部署的完整实践案例。
 
 ## ✨ 项目亮点
 - ✅ **实战导向**：记录了从零部署到故障解决的全过程
 - ✅ **问题驱动**：包含10+个典型生产环境问题及解决方案
 - ✅ **完整闭环**：从监控部署到自动化运维的全链路实践
 - ✅ **文档详尽**：每个步骤都有详细说明和原理分析
+
+## 📦 环境要求
+系统要求
+操作系统：Ubuntu 22.04 LTS (64位)
+
+内存：至少 2GB RAM (推荐 4GB)
+
+存储：至少 20GB 可用空间
+
+网络：稳定的网络连接，开放端口 80, 443, 10051, 10050
 
 ## 📊 技术栈
 | 组件 | 版本 | 用途 |
@@ -22,29 +32,28 @@
 | MySQL | 8.0.44 | 数据库 |
 | Nginx | 1.18.0 | Web服务器 |
 | PHP | 8.1.2 | 动态编程语言 |
+| Zabbix | Server	6.0 LTS	| 监控服务端
+| Zabbix | Agent 2	6.0 LTS	| 监控客户端
 
-## 📁 项目结构
+# 🚀 完整部署流程
+## 第一阶段：系统准备与优化
 ```
-zabbix-monitoring-lab/
-├── README.md # 项目说明
-├── ARCHITECTURE.md # 架构设计
-├── INSTALLATION_GUIDE.md # 安装指南
-├── TROUBLESHOOTING.md # 🚨 故障排查库（核心！）
-├── OPERATION.md # 运维手册
-├── SCRIPTS.md # 脚本说明
-│
-├── images/ # 截图资源
-│ ├── architecture/ # 架构图
-│ ├── dashboard/ # 仪表盘截图
-│ ├── monitoring/ # 监控项截图
-│ └── troubleshooting/ # 故障截图
-│
-├── scripts/ # 自动化脚本
-│ ├── deployment/ # 部署脚本
-│ └──  monitoring/ # 监控脚本
-│
-├── configs/ # 配置文件模板
-└── docs/ # 详细文档
-```
+# 更新系统包列表和已安装的包
+sudo apt update && sudo apt upgrade -y
 
+# 安装常用工具
+sudo apt install -y \
+  curl wget vim git htop net-tools \
+  tree telnet software-properties-common \
+  apt-transport-https ca-certificates
+
+```
+## 第二阶段：搭建LNMP环境（Nginx + MySQL + PHP）
+```
+sudo vim lnmp_install.sh
+
+
+
+
+```
 ------------
